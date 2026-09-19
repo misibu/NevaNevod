@@ -100,7 +100,7 @@ public sealed class Rf4ObservationProvider : IDisposable
             {
                 bestObservations = rootObservations;
                 bestRoot = root;
-                bestRodCount = observations.Count;
+                bestRodCount = rootObservations.Count;
                 bestPositionCount = positionCount;
                 _readStatus = $"Цепочка: {positionCount}/{Rf4Signature.RodChains.Length} удочек, игрок: {(playerPositionRead ? "да" : "нет")}";
             }
