@@ -13,6 +13,10 @@ public partial class MainWindow : Window
     private readonly OverlayOptions _options = new();
     private readonly DispatcherTimer _timer;
     private readonly bool[] _previousHooked = new bool[3];
+    // CheckBox Checked/Unchecked events can fire while InitializeComponent is
+    // still creating the controls. Ignore those early events until every named
+    // control has been assigned by WPF.
+    private bool _uiReady;
     private ObservationSnapshot _lastSnapshot = new(
         DateTimeOffset.Now,
         false,
@@ -23,6 +27,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _uiReady = true;
 
         _overlay.Left = 28;
         _overlay.Top = 96;
@@ -166,6 +171,9 @@ public partial class MainWindow : Window
 
     private void OptionChanged(object sender, RoutedEventArgs e)
     {
+        if (!_uiReady)
+            return;
+
         SyncOptions();
         UpdateView(_lastSnapshot);
     }
