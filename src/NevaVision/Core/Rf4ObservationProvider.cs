@@ -14,6 +14,8 @@ public sealed class Rf4ObservationProvider : IDisposable
     private readonly ReadOnlyProcessReader _reader = new();
     private readonly Dictionary<string, string> _fishNames;
     private readonly List<ulong> _rootCandidates = new();
+    private readonly Dictionary<(ulong Root, int Rod), ulong[]> _recoveredRodChains = new();
+    private readonly HashSet<(ulong Root, int Rod)> _rodRecoveryAttempts = new();
     private ulong _rootAddress;
     private string _attachStatus = "Игра не подключена";
     private string _readStatus = string.Empty;
@@ -53,6 +55,8 @@ public sealed class Rf4ObservationProvider : IDisposable
 
                 ulong staticRoot = unchecked(gameAssemblyBase + Rf4Signature.RootRva);
                 _rootCandidates.Clear();
+                _recoveredRodChains.Clear();
+                _rodRecoveryAttempts.Clear();
 
                 // Different RF4 builds expose the same singleton either directly
                 // or through the object chain kept in Rf4Signature. Keep both
@@ -71,6 +75,8 @@ public sealed class Rf4ObservationProvider : IDisposable
 
         _rootAddress = 0;
         _rootCandidates.Clear();
+        _recoveredRodChains.Clear();
+        _rodRecoveryAttempts.Clear();
         _readStatus = string.Empty;
         _attachStatus = "RF4 не найден или доступ к памяти ограничен";
         status = _attachStatus;
@@ -141,7 +147,41 @@ public sealed class Rf4ObservationProvider : IDisposable
     private bool TryReadRod(ulong rootAddress, int rodIndex, (float X, float Y, float Z)? playerPosition, out FishObservation? observation)
     {
         observation = null;
-        if (!_reader.TryResolveChain(rootAddress, Rf4Signature.RodChains[rodIndex], out ulong objectAddress))
+        var key = (rootAddress, rodIndex);
+
+        if (_recoveredRodChains.TryGetValue(key, out ulong[]? recoveredChain) &&
+            TryReadRodWithChain(rootAddress, recoveredChain, rodIndex, playerPosition, out observation))
+        {
+            return true;
+        }
+
+        if (TryReadRodWithChain(rootAddress, Rf4Signature.RodChains[rodIndex], rodIndex, playerPosition, out observation))
+            return true;
+
+        // The game has no usable global-metadata.dat, so the exact field layout
+        // can move between clients. Try a small, bounded neighbourhood around
+        // the known read-only chain once per root/rod instead of scanning the
+        // entire process.
+        if (!_rodRecoveryAttempts.Add(key))
+            return false;
+
+        foreach (ulong[] candidate in BuildRodChainVariants(rodIndex))
+        {
+            if (!TryReadRodWithChain(rootAddress, candidate, rodIndex, playerPosition, out observation))
+                continue;
+
+            _recoveredRodChains[key] = candidate;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryReadRodWithChain(ulong rootAddress, IReadOnlyList<ulong> rodChain, int rodIndex,
+        (float X, float Y, float Z)? playerPosition, out FishObservation? observation)
+    {
+        observation = null;
+        if (!_reader.TryResolveChain(rootAddress, rodChain, out ulong objectAddress))
             return false;
 
         // The source application treats a successful position read as the visible
@@ -214,6 +254,34 @@ public sealed class Rf4ObservationProvider : IDisposable
             IsRare: isRare,
             RawName: rawName);
         return true;
+    }
+
+    private static IEnumerable<ulong[]> BuildRodChainVariants(int rodIndex)
+    {
+        ulong[] original = Rf4Signature.RodChains[rodIndex];
+        var yielded = new HashSet<string>(StringComparer.Ordinal);
+
+        // The first hop is shared with the working player chain. Vary the
+        // following fields only, keeping the search small and deterministic.
+        int[] ranges = { 0, 0x100, 0x80, 0x80, 0x80 };
+        for (int index = 1; index < original.Length; index++)
+        {
+            for (int delta = -ranges[index]; delta <= ranges[index]; delta += 8)
+            {
+                if (delta == 0)
+                    continue;
+
+                ulong[] candidate = (ulong[])original.Clone();
+                long value = unchecked((long)original[index]) + delta;
+                if (value < 0 || value > 0x400)
+                    continue;
+
+                candidate[index] = (ulong)value;
+                string key = string.Join(",", candidate);
+                if (yielded.Add(key))
+                    yield return candidate;
+            }
+        }
     }
 
     private static Dictionary<string, string> LoadFishNames()
