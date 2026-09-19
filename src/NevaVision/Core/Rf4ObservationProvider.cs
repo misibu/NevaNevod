@@ -94,11 +94,11 @@ public sealed class Rf4ObservationProvider : IDisposable
 
         foreach (ulong root in _rootCandidates)
         {
-            (List<FishObservation> observations, int positionCount, bool playerPositionRead) = CaptureAtRoot(root);
-            if (observations.Count > bestRodCount ||
-                (observations.Count == bestRodCount && positionCount > bestPositionCount))
+            (List<FishObservation> rootObservations, int positionCount, bool playerPositionRead) = CaptureAtRoot(root);
+            if (rootObservations.Count > bestRodCount ||
+                (rootObservations.Count == bestRodCount && positionCount > bestPositionCount))
             {
-                bestObservations = observations;
+                bestObservations = rootObservations;
                 bestRoot = root;
                 bestRodCount = observations.Count;
                 bestPositionCount = positionCount;
