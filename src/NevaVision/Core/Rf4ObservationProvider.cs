@@ -1,0 +1,191 @@
+using System.Diagnostics;
+using System.Text.Json;
+
+namespace NevaVision.Core;
+
+/// <summary>
+/// RF4 reader that follows the confirmed read-only chains. Since Unity/IL2CPP
+/// layouts can change, every read is guarded and a failed chain simply produces
+/// an empty snapshot instead of touching game memory in any other way.
+/// </summary>
+public sealed class Rf4ObservationProvider : IDisposable
+{
+    private readonly ReadOnlyProcessReader _reader = new();
+    private readonly Dictionary<string, string> _fishNames;
+    private ulong _rootAddress;
+    private string _attachStatus = "Игра не подключена";
+
+    public Rf4ObservationProvider()
+    {
+        _fishNames = LoadFishNames();
+    }
+
+    public bool IsAttached => _reader.IsAttached && _rootAddress != 0;
+    public int? ProcessId => _reader.ProcessId;
+
+    public bool TryAttach(out string status)
+    {
+        foreach (string processName in new[] { "rf4_x64", "RussianFishing4", "Russian Fishing 4" })
+        {
+            Process[] candidates;
+            try
+            {
+                candidates = Process.GetProcessesByName(processName);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (Process process in candidates)
+            {
+                if (!_reader.Attach(process, out string attachError))
+                    continue;
+
+                if (!_reader.TryGetModuleBase("GameAssembly.dll", out ulong gameAssemblyBase))
+                {
+                    _reader.Detach();
+                    continue;
+                }
+
+                _rootAddress = unchecked(gameAssemblyBase + Rf4Signature.RootRva);
+                _attachStatus = $"Подключено к RF4, PID {process.Id}, сборка {Rf4Signature.TargetBuild}";
+                status = _attachStatus;
+                return true;
+            }
+        }
+
+        _rootAddress = 0;
+        _attachStatus = "RF4 не найден или доступ к памяти ограничен";
+        status = _attachStatus;
+        return false;
+    }
+
+    public ObservationSnapshot Capture()
+    {
+        if (!IsAttached)
+        {
+            return new ObservationSnapshot(DateTimeOffset.Now, false, null, _attachStatus, Array.Empty<FishObservation>());
+        }
+
+        (float X, float Y, float Z)? playerPosition = null;
+        if (_reader.TryResolveChain(_rootAddress, Rf4Signature.PlayerPositionChain, out ulong playerPositionAddress) &&
+            _reader.TryReadVector3(playerPositionAddress, out (float X, float Y, float Z) player))
+        {
+            playerPosition = player;
+        }
+
+        var observations = new List<FishObservation>(3);
+        for (int rod = 0; rod < Rf4Signature.RodChains.Length; rod++)
+        {
+            if (!TryReadRod(rod, playerPosition, out FishObservation? observation))
+                continue;
+            observations.Add(observation);
+        }
+
+        return new ObservationSnapshot(DateTimeOffset.Now, true, ProcessId, _attachStatus, observations);
+    }
+
+    private bool TryReadRod(int rodIndex, (float X, float Y, float Z)? playerPosition, out FishObservation? observation)
+    {
+        observation = null;
+        if (!_reader.TryResolveChain(_rootAddress, Rf4Signature.RodChains[rodIndex], out ulong objectAddress))
+            return false;
+
+        // The source application treats a successful position read as the visible
+        // fish transition. This also gives us a stable one-shot event for sound.
+        if (!_reader.TryResolveChain(objectAddress, Rf4Signature.PositionChain, out ulong positionAddress) ||
+            !_reader.TryReadVector3(positionAddress, out _))
+            return false;
+
+        string fishId = string.Empty;
+        string rawName = string.Empty;
+        if (_reader.TryResolveChain(objectAddress, Rf4Signature.FishNameChain, out ulong nameAddress))
+            _reader.TryReadUtf8(nameAddress, 96, out rawName);
+
+        if (string.IsNullOrWhiteSpace(rawName))
+            rawName = "Неизвестная рыба";
+
+        fishId = rawName.Trim();
+        string fishName = _fishNames.TryGetValue(fishId, out string? translated) ? translated : rawName;
+
+        double? weightKg = null;
+        if (_reader.TryResolveChain(objectAddress, Rf4Signature.WeightChain, out ulong weightAddress) &&
+            _reader.TryReadInt32(weightAddress, out int grams) && grams >= 0 && grams < 1_000_000)
+        {
+            weightKg = grams / Rf4Signature.GramsPerKilogram;
+        }
+
+        int? slot = null;
+        if (_reader.TryResolveChain(objectAddress, Rf4Signature.SlotChain, out ulong slotAddress) &&
+            _reader.TryReadInt32(slotAddress, out int slotValue) && slotValue is >= 0 and <= 16)
+        {
+            slot = slotValue;
+        }
+
+        bool isRare = false;
+        if (_reader.TryResolveChain(objectAddress, Rf4Signature.RarityChain, out ulong rarityAddress) &&
+            _reader.TryReadBytes(rarityAddress, 1, out byte[] rarityBytes))
+        {
+            isRare = rarityBytes[0] != 0;
+        }
+
+        if (_reader.TryResolveChain(objectAddress, Rf4Signature.StateChain, out ulong stateAddress) &&
+            _reader.TryReadInt32(stateAddress, out int state) && string.IsNullOrWhiteSpace(fishName))
+        {
+            // Keep the state read in the same guarded path for builds where the
+            // name pointer is unavailable. It is deliberately not used as a
+            // rarity guess because RF4 state values are build-dependent.
+            fishName = $"Рыба ({state.ToString()})";
+        }
+
+        double? distanceMeters = null;
+        if (playerPosition is { } player &&
+            _reader.TryResolveChain(objectAddress, Rf4Signature.PositionChain, out ulong distancePositionAddress) &&
+            _reader.TryReadVector3(distancePositionAddress, out (float X, float Y, float Z) fishPosition))
+        {
+            // This mirrors the two-axis distance used by the observed overlay.
+            double dx = fishPosition.X - player.X;
+            double dy = fishPosition.Y - player.Y;
+            distanceMeters = Math.Sqrt((dx * dx) + (2.0 * dy * dy));
+        }
+
+        observation = new FishObservation(
+            rodIndex,
+            IsActive: true,
+            IsHooked: true,
+            FishId: fishId,
+            FishName: fishName,
+            WeightKg: weightKg,
+            DistanceMeters: distanceMeters,
+            Slot: slot,
+            IsRare: isRare,
+            RawName: rawName);
+        return true;
+    }
+
+    private static Dictionary<string, string> LoadFishNames()
+    {
+        try
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, "Core", "FishNames.json");
+            if (!File.Exists(path))
+                path = Path.Combine(AppContext.BaseDirectory, "FishNames.json");
+
+            if (File.Exists(path))
+            {
+                var values = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path));
+                if (values is not null)
+                    return values;
+            }
+        }
+        catch
+        {
+            // The reader can still show the raw fish identifier.
+        }
+
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    public void Dispose() => _reader.Dispose();
+}

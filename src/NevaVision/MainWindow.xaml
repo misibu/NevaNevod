@@ -1,0 +1,70 @@
+<Window x:Class="NevaVision.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="NevaVision"
+        Width="820" Height="560"
+        MinWidth="720" MinHeight="480"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource PanelBrush}"
+        Foreground="{StaticResource TextBrush}">
+    <Grid Margin="18">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="230" />
+            <ColumnDefinition Width="18" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.ColumnSpan="3" Margin="0,0,0,16">
+            <TextBlock Text="NEVA" FontSize="30" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" />
+            <TextBlock Text="VISION  •  read-only overlay for RF4" FontSize="13" Foreground="{StaticResource MutedBrush}" />
+        </StackPanel>
+
+        <Border Grid.Row="1" Grid.Column="0" Background="{StaticResource PanelAltBrush}" CornerRadius="10" Padding="16">
+            <StackPanel>
+                <TextBlock Text="Основное" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
+                <Button x:Name="AttachButton" Content="Подключиться к RF4" Click="AttachButton_Click"
+                        Background="{StaticResource AccentBrush}" Foreground="#10161D" FontWeight="SemiBold"
+                        Padding="10,8" Margin="0,0,0,8" />
+                <CheckBox x:Name="DemoCheckBox" Content="Демонстрационный режим" IsChecked="True"
+                          Checked="OptionChanged" Unchecked="OptionChanged" />
+                <Separator Margin="0,10,0,10" />
+                <TextBlock Text="Отображение" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,4" />
+                <CheckBox x:Name="ShowFishCheckBox" Content="Отображение рыбы" IsChecked="True" Checked="OptionChanged" Unchecked="OptionChanged" />
+                <CheckBox x:Name="ShowNameCheckBox" Content="Отображение названия" IsChecked="True" Checked="OptionChanged" Unchecked="OptionChanged" />
+                <CheckBox x:Name="ShowWeightCheckBox" Content="Отображение веса" IsChecked="True" Checked="OptionChanged" Unchecked="OptionChanged" />
+                <CheckBox x:Name="ShowDistanceCheckBox" Content="Отображение дистанции" IsChecked="True" Checked="OptionChanged" Unchecked="OptionChanged" />
+                <CheckBox x:Name="ShowRarityCheckBox" Content="Отображать редкость" IsChecked="True" Checked="OptionChanged" Unchecked="OptionChanged" />
+                <CheckBox x:Name="SoundCheckBox" Content="Звуковой сигнал" IsChecked="True" Checked="OptionChanged" Unchecked="OptionChanged" />
+                <CheckBox x:Name="ShowSlotCheckBox" Content="Отображать слот удочки" IsChecked="True" Checked="OptionChanged" Unchecked="OptionChanged" />
+                <CheckBox x:Name="BiteAssistantCheckBox" Content="Помощник при поклёвке" IsChecked="True" Checked="OptionChanged" Unchecked="OptionChanged" />
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="1" Grid.Column="2" Background="#0F151E" BorderBrush="#293544" BorderThickness="1" CornerRadius="10" Padding="20">
+            <StackPanel>
+                <TextBlock Text="Состояние" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock x:Name="StatusText" Margin="0,8,0,0" FontSize="15" Foreground="{StaticResource AccentBrush}" Text="Демо-режим" TextWrapping="Wrap" />
+                <TextBlock x:Name="ProcessText" Margin="0,4,0,18" Foreground="{StaticResource MutedBrush}" Text="PID: —" />
+                <TextBlock Text="Последний снимок" Foreground="{StaticResource MutedBrush}" />
+                <TextBlock x:Name="SnapshotText" Margin="0,5,0,18" FontSize="16" Text="Ожидание…" TextWrapping="Wrap" />
+                <Border Background="#182231" CornerRadius="8" Padding="14">
+                    <StackPanel>
+                        <TextBlock Text="Как работает прототип" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,7,0,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"
+                                   Text="NevaVision получает снимок, формирует текстовую метку и показывает её поверх окна. При появлении новой записи воспроизводится один сигнал. Никаких команд в игру не отправляется." />
+                    </StackPanel>
+                </Border>
+                <TextBlock Margin="0,18,0,0" Foreground="#F1C26D" TextWrapping="Wrap"
+                           Text="Сигнатура RF4 4.0.25034 экспериментальная: для проверки живого чтения нужен запуск игры и один скриншот результата." />
+            </StackPanel>
+        </Border>
+
+        <TextBlock Grid.Row="2" Grid.ColumnSpan="3" Margin="0,14,0,0" Foreground="{StaticResource MutedBrush}"
+                   Text="NevaVision • отдельное приложение • чтение только для отображения" />
+    </Grid>
+</Window>
