@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Text.Json;
 
 namespace NevaVision.Core;
@@ -80,7 +81,8 @@ public sealed class Rf4ObservationProvider : IDisposable
         {
             if (!TryReadRod(rod, playerPosition, out FishObservation? observation))
                 continue;
-            observations.Add(observation);
+            if (observation is not null)
+                observations.Add(observation);
         }
 
         return new ObservationSnapshot(DateTimeOffset.Now, true, ProcessId, _attachStatus, observations);
