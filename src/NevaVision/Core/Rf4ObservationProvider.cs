@@ -13,8 +13,10 @@ public sealed class Rf4ObservationProvider : IDisposable
 {
     private readonly ReadOnlyProcessReader _reader = new();
     private readonly Dictionary<string, string> _fishNames;
+    private readonly List<ulong> _rootCandidates = new();
     private ulong _rootAddress;
     private string _attachStatus = "Игра не подключена";
+    private string _readStatus = string.Empty;
 
     public Rf4ObservationProvider()
     {
@@ -49,14 +51,27 @@ public sealed class Rf4ObservationProvider : IDisposable
                     continue;
                 }
 
-                _rootAddress = unchecked(gameAssemblyBase + Rf4Signature.RootRva);
+                ulong staticRoot = unchecked(gameAssemblyBase + Rf4Signature.RootRva);
+                _rootCandidates.Clear();
+
+                // Different RF4 builds expose the same singleton either directly
+                // or through the object chain kept in Rf4Signature. Keep both
+                // candidates and select the one that produces a valid rod read.
+                if (_reader.TryResolveChain(staticRoot, Rf4Signature.RootObjectChain, out ulong resolvedRoot))
+                    _rootCandidates.Add(resolvedRoot);
+                _rootCandidates.Add(staticRoot);
+                _rootAddress = _rootCandidates[0];
+
                 _attachStatus = $"Подключено к RF4, PID {process.Id}, сборка {Rf4Signature.TargetBuild}";
+                _readStatus = "Проверка цепочек памяти…";
                 status = _attachStatus;
                 return true;
             }
         }
 
         _rootAddress = 0;
+        _rootCandidates.Clear();
+        _readStatus = string.Empty;
         _attachStatus = "RF4 не найден или доступ к памяти ограничен";
         status = _attachStatus;
         return false;
@@ -69,29 +84,64 @@ public sealed class Rf4ObservationProvider : IDisposable
             return new ObservationSnapshot(DateTimeOffset.Now, false, null, _attachStatus, Array.Empty<FishObservation>());
         }
 
+        if (_rootCandidates.Count == 0)
+            _rootCandidates.Add(_rootAddress);
+
+        List<FishObservation>? bestObservations = null;
+        ulong bestRoot = _rootAddress;
+        int bestRodCount = -1;
+        int bestPositionCount = 0;
+
+        foreach (ulong root in _rootCandidates)
+        {
+            (List<FishObservation> observations, int positionCount, bool playerPositionRead) = CaptureAtRoot(root);
+            if (observations.Count > bestRodCount ||
+                (observations.Count == bestRodCount && positionCount > bestPositionCount))
+            {
+                bestObservations = observations;
+                bestRoot = root;
+                bestRodCount = observations.Count;
+                bestPositionCount = positionCount;
+                _readStatus = $"Цепочка: {positionCount}/{Rf4Signature.RodChains.Length} удочек, игрок: {(playerPositionRead ? "да" : "нет")}";
+            }
+        }
+
+        _rootAddress = bestRoot;
+        var observations = bestObservations ?? new List<FishObservation>();
+        string status = $"{_attachStatus}; {_readStatus}";
+        return new ObservationSnapshot(DateTimeOffset.Now, true, ProcessId, status, observations);
+    }
+
+    private (List<FishObservation> Observations, int PositionCount, bool PlayerPositionRead) CaptureAtRoot(ulong rootAddress)
+    {
         (float X, float Y, float Z)? playerPosition = null;
-        if (_reader.TryResolveChain(_rootAddress, Rf4Signature.PlayerPositionChain, out ulong playerPositionAddress) &&
+        bool playerPositionRead = false;
+        if (_reader.TryResolveChain(rootAddress, Rf4Signature.PlayerPositionChain, out ulong playerPositionAddress) &&
             _reader.TryReadVector3(playerPositionAddress, out (float X, float Y, float Z) player))
         {
             playerPosition = player;
+            playerPositionRead = true;
         }
 
         var observations = new List<FishObservation>(3);
+        int positionCount = 0;
         for (int rod = 0; rod < Rf4Signature.RodChains.Length; rod++)
         {
-            if (!TryReadRod(rod, playerPosition, out FishObservation? observation))
+            if (!TryReadRod(rootAddress, rod, playerPosition, out FishObservation? observation))
                 continue;
+
+            positionCount++;
             if (observation is not null)
                 observations.Add(observation);
         }
 
-        return new ObservationSnapshot(DateTimeOffset.Now, true, ProcessId, _attachStatus, observations);
+        return (observations, positionCount, playerPositionRead);
     }
 
-    private bool TryReadRod(int rodIndex, (float X, float Y, float Z)? playerPosition, out FishObservation? observation)
+    private bool TryReadRod(ulong rootAddress, int rodIndex, (float X, float Y, float Z)? playerPosition, out FishObservation? observation)
     {
         observation = null;
-        if (!_reader.TryResolveChain(_rootAddress, Rf4Signature.RodChains[rodIndex], out ulong objectAddress))
+        if (!_reader.TryResolveChain(rootAddress, Rf4Signature.RodChains[rodIndex], out ulong objectAddress))
             return false;
 
         // The source application treats a successful position read as the visible
